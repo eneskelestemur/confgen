@@ -1,0 +1,38 @@
+# ConfGen default configuration
+# Override any parameter via CLI: confgen run --n-confs 500 --forcefield smirnoff
+
+# --- I/O ---
+output_dir: confgen_output
+
+# --- Conformer Generation ---
+n_confs: 200
+rmsd_threshold: 1.5            # Angstroms
+energy_window: null             # kcal/mol above global min; null = no filter
+
+# --- Force Field ---
+forcefield: mmff                # mmff | uff | gaff | smirnoff | espaloma | gfn2-xtb | gfn1-xtb | ipea1-xtb
+max_minimize_iters: 500
+
+# --- Solvation ---
+solvent: null                   # null (vacuum) | implicit-obc2 | implicit-gbn2 | explicit-tip3p | ...
+
+# --- Stereochemistry ---
+enumerate_stereo: false
+max_stereo_isomers: 32
+
+# --- Constraints ---
+constraint_smarts: null         # SMARTS for atoms to fix during embedding
+constraint_coords: null         # Reference structure file with coordinates for constrained atoms
+
+# --- Curation ---
+max_heavy_atoms: 100
+allowed_elements: null          # null = default organic (C,N,O,S,P,F,Cl,Br,I,H)
+
+# --- Computation ---
+num_workers: 1                  # Molecule-level parallelism (joblib)
+num_threads: 1                  # Per-worker threads (RDKit / OpenMM)
+platform: CPU                   # CPU | CUDA | OpenCL | HIP (OpenMM only)
+seed: 42                        # -1 for non-deterministic
+
+# --- Logging ---
+log_level: INFO

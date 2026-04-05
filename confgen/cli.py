@@ -9,32 +9,32 @@ import yaml
 from confgen._constants import ALL_FORCEFIELDS, ALL_SOLVENT_MODELS
 from confgen.config import ConfGenConfig
 
-# ── help text blocks ──────────────────────────────────────────────────────
+# ---- help text blocks ----
 
 _FF_HELP = """\b
 Force field for minimization.
 RDKit (vacuum only):
-  mmff      MMFF94 (default)
-  uff       Universal Force Field
+  mmff          MMFF94 (default)
+  uff           Universal Force Field
 OpenMM (supports solvation):
-  gaff      General Amber FF 2.11
-  smirnoff  OpenFF (openff-2.2.1)
-  espaloma  Espaloma ML (0.3.2)
+  gaff          General Amber FF 2.11
+  smirnoff      OpenFF (openff-2.2.1)
+  espaloma      Espaloma ML (0.3.2)
 tblite (vacuum only):
-  gfn2-xtb  GFN2-xTB
-  gfn1-xtb  GFN1-xTB
-  ipea1-xtb IPEA1-xTB"""
+  gfn2-xtb      GFN2-xTB
+  gfn1-xtb      GFN1-xTB
+  ipea1-xtb     IPEA1-xTB"""
 
 _SOLVENT_HELP = """\b
 Solvent model (needs OpenMM FF).
 Implicit (Generalized Born):
-  implicit-obc1  implicit-obc2
-  implicit-gbn   implicit-gbn2
+  implicit-obc1     implicit-obc2
+  implicit-gbn      implicit-gbn2
   implicit-hct
 Explicit (water box, 0.5 nm pad):
-  explicit-tip3p   explicit-spce
-  explicit-tip3pfb explicit-opc
-  explicit-tip4pew explicit-opc3
+  explicit-tip3p    explicit-spce
+  explicit-tip3pfb  explicit-opc
+  explicit-tip4pew  explicit-opc3
   explicit-tip4pfb"""
 
 
@@ -45,7 +45,7 @@ def main() -> None:
 
 
 @main.command()
-# ── I/O ──
+# ---- I/O ----
 @click.option(
     "-i", "--input", "input_path", required=True,
     help="Input file (.smi, .sdf) or directory.",
@@ -59,7 +59,7 @@ def main() -> None:
     type=click.Path(exists=True),
     help="YAML config file (CLI flags override file values).",
 )
-# ── Conformer generation ──
+# ---- Conformer generation ----
 @click.option(
     "--n-confs", type=int, default=None,
     help="Number of ETKDG conformer attempts.  [default: 200]",
@@ -72,7 +72,7 @@ def main() -> None:
     "--energy-window", type=float, default=None,
     help="Keep conformers within this window (kcal/mol) of the minimum.  [default: off]",
 )
-# ── Force field & solvation ──
+# ---- Force field & solvation ----
 @click.option(
     "--forcefield",
     type=click.Choice(sorted(ALL_FORCEFIELDS), case_sensitive=False),
@@ -89,7 +89,7 @@ def main() -> None:
     default=None,
     help=_SOLVENT_HELP,
 )
-# ── Stereochemistry ──
+# ---- Stereochemistry ----
 @click.option(
     "--enumerate-stereo/--no-enumerate-stereo", default=None,
     help="Enumerate unspecified stereocenters.  [default: off]",
@@ -98,7 +98,7 @@ def main() -> None:
     "--max-stereo-isomers", type=int, default=None,
     help="Max stereoisomers per molecule.  [default: 32]",
 )
-# ── Constraints ──
+# ---- Constraints ----
 @click.option(
     "--constraint-smarts", default=None,
     help="SMARTS pattern for atoms fixed during embedding.",
@@ -108,12 +108,12 @@ def main() -> None:
     type=click.Path(exists=True),
     help="Reference structure (.sdf/.mol2) with coordinates for constrained atoms.",
 )
-# ── Curation ──
+# ---- Curation ----
 @click.option(
     "--max-heavy-atoms", type=int, default=None,
     help="Filter molecules with more heavy atoms.  [default: 100]",
 )
-# ── Computation ──
+# ---- Computation ----
 @click.option(
     "--num-workers", type=int, default=None,
     help="Molecule-level parallelism via joblib.  [default: 1]",

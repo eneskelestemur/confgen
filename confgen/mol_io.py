@@ -14,6 +14,51 @@ from confgen._typing import MolWithID
 _logger = logging.getLogger(__name__)
 
 
+class SDFWriterContext:
+    """Streaming SDF writer that can be used as a context manager.
+
+    Conformers are written to disk immediately via ``write_results``,
+    avoiding the need to accumulate all results in memory.
+    """
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._writer: Chem.SDWriter | None = None
+        self.count = 0
+
+    def __enter__(self) -> SDFWriterContext:
+        self._writer = Chem.SDWriter(str(self._path))
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # noqa: ANN001
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+
+    def write_results(self, results: list[dict]) -> None:
+        """Write a batch of conformer result dicts to the SDF."""
+        if self._writer is None:
+            raise RuntimeError("SDFWriterContext is not open")
+        for entry in results:
+            mol: Chem.Mol = entry["mol"]
+            conf_id: int = entry["conf_id"]
+            name = f"{entry['mol_id']}__{entry['conf_tag']}"
+            mol.SetProp("_Name", name)
+            mol.SetProp("mol_id", entry["mol_id"])
+            mol.SetProp("conf_tag", entry["conf_tag"])
+            mol.SetProp("smiles", entry["smiles"])
+            if entry.get("energy") is not None:
+                mol.SetProp("energy", f"{entry['energy']:.6f}")
+                mol.SetProp("energy_unit", entry.get("energy_unit", "kcal/mol"))
+            mol.SetProp("forcefield", entry.get("forcefield", ""))
+            if entry.get("original_name"):
+                mol.SetProp("original_name", entry["original_name"])
+            if entry.get("stereo_parent_id"):
+                mol.SetProp("stereo_parent_id", entry["stereo_parent_id"])
+            self._writer.write(mol, confId=conf_id)
+            self.count += 1
+
+
 def read_molecules(input_path: str) -> list[MolWithID]:
     """Read molecules from file or directory, returning (mol, id) pairs."""
     path = Path(input_path)
@@ -118,38 +163,6 @@ def write_input_molecules_smi(
         for mol, mol_id in molecules:
             smi = Chem.MolToSmiles(mol, isomericSmiles=True)
             f.write(f"{smi} {mol_id}\n")
-
-
-def write_conformers_sdf(
-    results: list[dict],
-    output_path: Path,
-) -> None:
-    """Write all conformer results to a single SDF file.
-
-    Args:
-        results: List of dicts, each with keys:
-            mol, mol_id, conf_id, smiles, energy, energy_unit, forcefield,
-            original_name, stereo_parent_id (optional).
-    """
-    writer = Chem.SDWriter(str(output_path))
-    for entry in results:
-        mol: Chem.Mol = entry["mol"]
-        conf_id: int = entry["conf_id"]
-        name = f"{entry['mol_id']}__{entry['conf_tag']}"
-        mol.SetProp("_Name", name)
-        mol.SetProp("mol_id", entry["mol_id"])
-        mol.SetProp("conf_tag", entry["conf_tag"])
-        mol.SetProp("smiles", entry["smiles"])
-        if entry.get("energy") is not None:
-            mol.SetProp("energy", f"{entry['energy']:.6f}")
-            mol.SetProp("energy_unit", entry.get("energy_unit", "kcal/mol"))
-        mol.SetProp("forcefield", entry.get("forcefield", ""))
-        if entry.get("original_name"):
-            mol.SetProp("original_name", entry["original_name"])
-        if entry.get("stereo_parent_id"):
-            mol.SetProp("stereo_parent_id", entry["stereo_parent_id"])
-        writer.write(mol, confId=conf_id)
-    writer.close()
 
 
 def write_run_params(

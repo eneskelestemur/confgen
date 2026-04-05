@@ -5,6 +5,8 @@ import logging
 from typing import Any
 
 from rdkit import Chem
+from openmm import app, unit
+from openff.toolkit import Molecule as OFFMol
 
 from confgen._constants import (
     DEFAULT_ESPALOMA_MODEL,
@@ -14,6 +16,7 @@ from confgen._constants import (
     RDKIT_FORCEFIELDS,
     TBLITE_METHODS,
 )
+from confgen.solvation import add_explicit_solvent, get_solvent_xmls, is_explicit
 
 _logger = logging.getLogger(__name__)
 
@@ -69,7 +72,12 @@ class ForceFieldProvider:
             from openmmforcefields.generators.template_generators import (
                 EspalomaTemplateGenerator,
             )
-            return EspalomaTemplateGenerator(off_mol, forcefield=DEFAULT_ESPALOMA_MODEL)
+            return EspalomaTemplateGenerator(
+                off_mol, 
+                forcefield=DEFAULT_ESPALOMA_MODEL,
+                cache="~/.cache_espaloma",
+                template_generator_kwargs={"charge_method": "nn"}
+            )
 
         raise ValueError(f"No OpenMM template generator for: {self.name}")
 
@@ -88,11 +96,6 @@ class ForceFieldProvider:
         Returns:
             (system, modeller) — OpenMM System and Modeller with positions set.
         """
-        from openmm import app, unit
-        from openff.toolkit import Molecule as OFFMol
-
-        from confgen.solvation import add_explicit_solvent, get_solvent_xmls, is_explicit
-
         off_mol = OFFMol.from_rdkit(mol, allow_undefined_stereo=True)
         off_top = off_mol.to_topology()
         omm_top = off_top.to_openmm()
@@ -113,8 +116,8 @@ class ForceFieldProvider:
             )
             system = ff.createSystem(
                 modeller.topology,
-                nonbondedMethod=app.PME,
-                nonbondedCutoff=1.0 * unit.nanometer,
+                nonbondedMethod=app.NoCutoff,
+                nonbondedCutoff=1 * unit.nanometer,
                 rigidWater=True,
             )
         else:

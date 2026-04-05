@@ -2,14 +2,20 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import numpy as np
+import openmm as mm
+from openmm import app, unit
 from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers
+from scipy.optimize import minimize as scipy_minimize
+from tblite.interface import Calculator
 
 from confgen._constants import HARTREE_TO_KCALMOL, KJ_TO_KCAL
 from confgen.forcefield import ForceFieldProvider
+from confgen.solvation import is_explicit
 
 _logger = logging.getLogger(__name__)
 
@@ -97,19 +103,88 @@ class Minimizer:
     def _minimize_openmm(
         self, mol: Chem.Mol, conf_ids: list[int]
     ) -> list[tuple[int, float]]:
-        """Build an OpenMM system once, minimize each conformer by updating positions."""
-        import openmm as mm
-        from openmm import app, unit
+        """Minimize each conformer with OpenMM.
 
-        from confgen.solvation import is_explicit
-
+        For vacuum/implicit solvent the system is built once and conformer
+        positions are swapped in.  For explicit solvent a fresh solvation
+        box is constructed for every conformer so that water molecules are
+        placed without bias from a previous minimization.
+        """
         explicit = is_explicit(self.solvent)
         n_solute = mol.GetNumAtoms()
 
+        if explicit:
+            return self._minimize_openmm_explicit(mol, conf_ids, n_solute)
+        return self._minimize_openmm_vacuum(mol, conf_ids)
+
+    def _minimize_openmm_vacuum(
+        self, mol: Chem.Mol, conf_ids: list[int]
+    ) -> list[tuple[int, float]]:
+        """Vacuum / implicit: build system once, swap solute positions per conformer."""
         system, modeller = self.ff_provider.build_openmm_system(
             mol, solvent=self.solvent
         )
+        simulation = self._make_simulation(modeller.topology, system)
 
+        energies = []
+        for cid in conf_ids:
+            positions = self._rdkit_conf_to_openmm_positions(mol, cid)
+            simulation.context.setPositions(positions)
+            simulation.minimizeEnergy(
+                tolerance=10.0 * unit.kilojoules_per_mole / unit.nanometer,
+                maxIterations=self.max_iters,
+            )
+            state = simulation.context.getState(energy=True, positions=True)
+            energy_kcal = (
+                state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+                * KJ_TO_KCAL
+            )
+            self._update_rdkit_conf(mol, cid, state, mol.GetNumAtoms())
+            energies.append((cid, energy_kcal))
+        return energies
+
+    def _minimize_openmm_explicit(
+        self, mol: Chem.Mol, conf_ids: list[int], n_solute: int
+    ) -> list[tuple[int, float]]:
+        """Explicit solvent: rebuild solvation box per conformer."""
+        energies = []
+        for cid in conf_ids:
+            # Update the RDKit mol to have this conformer's coords as the
+            # "current" geometry so build_openmm_system sees them.
+            tmp_mol = Chem.RWMol(mol)
+            conf_src = mol.GetConformer(cid)
+            # Create a single-conformer copy for system building
+            new_mol = Chem.RWMol(mol)
+            new_mol.RemoveAllConformers()
+            new_conf = Chem.Conformer(n_solute)
+            for i in range(n_solute):
+                pt = conf_src.GetAtomPosition(i)
+                new_conf.SetAtomPosition(i, pt)
+            new_mol.AddConformer(new_conf, assignId=True)
+
+            system, modeller = self.ff_provider.build_openmm_system(
+                new_mol.GetMol(), solvent=self.solvent
+            )
+            simulation = self._make_simulation(modeller.topology, system)
+            simulation.context.setPositions(modeller.positions)
+            simulation.minimizeEnergy(
+                tolerance=10.0 * unit.kilojoules_per_mole / unit.nanometer,
+                maxIterations=self.max_iters,
+            )
+            state = simulation.context.getState(energy=True, positions=True)
+            energy_kcal = (
+                state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+                * KJ_TO_KCAL
+            )
+            # Write back only solute positions to the original mol
+            self._update_rdkit_conf(mol, cid, state, n_solute)
+            energies.append((cid, energy_kcal))
+        return energies
+
+    def _make_simulation(
+        self, topology: Any, system: Any
+    ) -> app.Simulation:
+        """Create an OpenMM Simulation with the configured integrator/platform."""
         integrator = mm.LangevinMiddleIntegrator(
             300 * unit.kelvin,
             1.0 / unit.picosecond,
@@ -117,62 +192,36 @@ class Minimizer:
         )
         if self.seed >= 0:
             integrator.setRandomNumberSeed(self.seed)
-
         platform = mm.Platform.getPlatformByName(self.platform)
-        simulation = app.Simulation(modeller.topology, system, integrator, platform)
+        return app.Simulation(topology, system, integrator, platform)
 
-        # For explicit solvent, cache water/ion positions (nm) and update after
-        # each minimization so the next conformer starts from relaxed solvent.
-        if explicit:
-            init_pos_nm = np.array(
-                modeller.positions.value_in_unit(unit.nanometer)
-            )
-            water_pos_nm = init_pos_nm[n_solute:]
-
-        energies = []
-        for cid in conf_ids:
-            if explicit:
-                solute_nm = self._conf_positions_nm(mol, cid)
-                full_pos = np.vstack([solute_nm, water_pos_nm])
-                simulation.context.setPositions(full_pos * unit.nanometer)
-            else:
-                positions = self._rdkit_conf_to_openmm_positions(mol, cid)
-                simulation.context.setPositions(positions)
-
-            simulation.minimizeEnergy(
-                tolerance=10.0 * unit.kilojoules_per_mole / unit.nanometer,
-                maxIterations=self.max_iters,
-            )
-            state = simulation.context.getState(energy=True, positions=True)
-            energy_kj = state.getPotentialEnergy().value_in_unit(
-                unit.kilojoules_per_mole
-            )
-            energy_kcal = energy_kj * KJ_TO_KCAL
-
-            # Write minimized solute positions back to RDKit conformer
-            new_pos = state.getPositions(asNumpy=True).value_in_unit(unit.angstrom)
-            conf = mol.GetConformer(cid)
-            for i in range(n_solute):
-                conf.SetAtomPosition(i, new_pos[i].tolist())
-
-            # Carry relaxed water positions to the next conformer
-            if explicit:
-                new_pos_nm = state.getPositions(asNumpy=True).value_in_unit(
-                    unit.nanometer
-                )
-                water_pos_nm = new_pos_nm[n_solute:]
-
-            energies.append((cid, energy_kcal))
-
-        return energies
+    @staticmethod
+    def _update_rdkit_conf(
+        mol: Chem.Mol,
+        conf_id: int,
+        state: Any,
+        n_atoms: int,
+    ) -> None:
+        """Write minimized positions from an OpenMM state back to an RDKit conformer."""
+        new_pos = state.getPositions(asNumpy=True).value_in_unit(unit.angstrom)
+        conf = mol.GetConformer(conf_id)
+        for i in range(n_atoms):
+            conf.SetAtomPosition(i, new_pos[i].tolist())
 
     # ---- tblite ----
 
     def _minimize_tblite(
         self, mol: Chem.Mol, conf_ids: list[int]
     ) -> list[tuple[int, float]]:
-        """Optimize with GFN2-xTB / GFN1-xTB / IPEA1-xTB via tblite."""
-        from tblite.interface import Calculator
+        """Optimize with GFN2-xTB / GFN1-xTB / IPEA1-xTB via tblite.
+
+        Uses scipy L-BFGS-B for geometry optimization.  OpenMP
+        parallelism is configured via ``num_threads``.
+        """
+        # Configure OpenMP threads for tblite's internal parallelism
+        omp_threads = f"{self.num_threads},1"
+        os.environ["OMP_NUM_THREADS"] = omp_threads
+        os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 
         method = self.ff_provider.get_tblite_method()
 
@@ -181,6 +230,7 @@ class Minimizer:
         )
         charge = float(Chem.GetFormalCharge(mol))
         n_unpaired = 0  # assume closed-shell
+        n_atoms = mol.GetNumAtoms()
 
         energies = []
         for cid in conf_ids:
@@ -194,64 +244,54 @@ class Minimizer:
                 charge=charge, uhf=n_unpaired,
             )
             calc.set("verbosity", 0)
-            if self.max_iters > 0:
-                calc.set("max-iter", self.max_iters)
 
-            # Gradient-based geometry optimization
-            positions_bohr, energy_hartree = self._tblite_optimize(
-                calc, positions_bohr, max_steps=self.max_iters
+            opt_bohr, energy_hartree = self._tblite_optimize_lbfgs(
+                calc, positions_bohr, n_atoms, max_iters=self.max_iters
             )
 
             energy_kcal = energy_hartree * HARTREE_TO_KCALMOL
-            positions_ang = positions_bohr * 0.52917721067
+            opt_ang = opt_bohr * 0.52917721067
 
-            for i in range(mol.GetNumAtoms()):
-                conf.SetAtomPosition(i, positions_ang[i].tolist())
+            for i in range(n_atoms):
+                conf.SetAtomPosition(i, opt_ang[i].tolist())
 
             energies.append((cid, energy_kcal))
 
         return energies
 
     @staticmethod
-    def _tblite_optimize(
+    def _tblite_optimize_lbfgs(
         calc: Any,
         positions_bohr: np.ndarray,
-        max_steps: int = 500,
+        n_atoms: int,
+        max_iters: int = 500,
         grad_tol: float = 1e-4,
-        step_size: float = 0.5,
     ) -> tuple[np.ndarray, float]:
-        """Steepest-descent geometry optimization using tblite singlepoint calls."""
-        pos = positions_bohr.copy()
-        energy = None
-        for _ in range(max_steps):
+        """L-BFGS-B geometry optimization using scipy + tblite singlepoints."""
+
+        def func_and_grad(flat_pos: np.ndarray) -> tuple[float, np.ndarray]:
+            pos = flat_pos.reshape(n_atoms, 3)
             calc.update(positions=pos)
             result = calc.singlepoint()
-            energy = result["energy"]
-            grad = result["gradient"]
-            rms_grad = np.sqrt(np.mean(grad**2))
-            if rms_grad < grad_tol:
-                break
-            pos -= step_size * grad
-        return pos, energy
+            energy = float(result["energy"])
+            gradient = np.array(result["gradient"])
+            return energy, gradient.ravel()
+
+        res = scipy_minimize(
+            func_and_grad,
+            positions_bohr.ravel().copy(),
+            method="L-BFGS-B",
+            jac=True,
+            options={"maxiter": max_iters, "gtol": grad_tol},
+        )
+        opt_pos = res.x.reshape(n_atoms, 3)
+        return opt_pos, float(res.fun)
 
     # ---- helpers ----
 
     @staticmethod
-    def _conf_positions_nm(mol: Chem.Mol, conf_id: int) -> np.ndarray:
-        """Return conformer positions as a numpy array in nanometers."""
-        conf = mol.GetConformer(conf_id)
-        return np.array([
-            [conf.GetAtomPosition(i).x * 0.1,
-             conf.GetAtomPosition(i).y * 0.1,
-             conf.GetAtomPosition(i).z * 0.1]
-            for i in range(mol.GetNumAtoms())
-        ])
-
-    @staticmethod
     def _rdkit_conf_to_openmm_positions(mol: Chem.Mol, conf_id: int) -> Any:
         """Convert RDKit conformer coordinates to OpenMM Quantity (nanometers)."""
-        from openmm import unit
-
         conf = mol.GetConformer(conf_id)
         positions = []
         for i in range(mol.GetNumAtoms()):

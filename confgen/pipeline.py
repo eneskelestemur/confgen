@@ -15,10 +15,10 @@ from confgen.forcefield import ForceFieldProvider
 from confgen.generator import ConformerGenerator
 from confgen.minimizer import Minimizer
 from confgen.mol_io import (
+    SDFWriterContext,
     assign_mol_ids,
     get_software_versions,
     read_molecules,
-    write_conformers_sdf,
     write_input_molecules_smi,
     write_run_params,
 )
@@ -95,8 +95,8 @@ class ConfGenPipeline:
             solvent=cfg.solvent,
         )
 
-        # ---- Generate & minimize ----
-        all_results: list[dict] = []
+        # ---- Generate, minimize & write ----
+        sdf_path = out_dir / "conformers.sdf"
         stats = {
             "total_input": len(raw),
             "valid_parsed": len(molecules),
@@ -107,28 +107,40 @@ class ConfGenPipeline:
             "total_conformers": 0,
         }
 
-        if cfg.num_workers > 1:
-            all_results, stats = self._run_parallel(
-                stereo_mols, generator, minimizer, ff_provider, stats
-            )
-        else:
-            all_results, stats = self._run_sequential(
-                stereo_mols, generator, minimizer, ff_provider, stats
-            )
-
-        # ---- Energy window filter ----
-        if cfg.energy_window is not None and all_results:
-            all_results = self._filter_by_energy_window(all_results, cfg.energy_window)
-            stats["total_conformers"] = len(all_results)
-
-        # ---- Write output ----
-        write_conformers_sdf(all_results, out_dir / "conformers.sdf")
+        with SDFWriterContext(sdf_path) as sdf_writer:
+            if cfg.num_workers > 1:
+                stats = self._run_parallel(
+                    stereo_mols, generator, minimizer, ff_provider,
+                    stats, sdf_writer,
+                )
+            else:
+                stats = self._run_sequential(
+                    stereo_mols, generator, minimizer, ff_provider,
+                    stats, sdf_writer,
+                )
+            stats["total_conformers"] = sdf_writer.count
 
         _logger.info(
             f"Done: {stats['successful_molecules']} molecules, "
             f"{stats['total_conformers']} conformers written to {out_dir}"
         )
         return stats
+
+    # ---- helpers ----
+
+    def _flush_results(
+        self,
+        results: list[dict],
+        sdf_writer: SDFWriterContext,
+    ) -> None:
+        """Apply energy-window filter (if configured) and write to SDF."""
+        if not results:
+            return
+        if self.config.energy_window is not None:
+            results = self._filter_by_energy_window(
+                results, self.config.energy_window
+            )
+        sdf_writer.write_results(results)
 
     def _run_sequential(
         self,
@@ -137,8 +149,8 @@ class ConfGenPipeline:
         minimizer: Minimizer,
         ff_provider: ForceFieldProvider,
         stats: dict,
-    ) -> tuple[list[dict], dict]:
-        all_results: list[dict] = []
+        sdf_writer: SDFWriterContext,
+    ) -> dict:
         for mol, mol_id, parent_id in tqdm(
             stereo_mols, desc="Generating conformers", disable=_logger.level > logging.INFO
         ):
@@ -146,12 +158,11 @@ class ConfGenPipeline:
                 mol, mol_id, parent_id, generator, minimizer, ff_provider
             )
             if results:
-                all_results.extend(results)
+                self._flush_results(results, sdf_writer)
                 stats["successful_molecules"] += 1
-                stats["total_conformers"] += len(results)
             else:
                 stats["failed_generation"] += 1
-        return all_results, stats
+        return stats
 
     def _run_parallel(
         self,
@@ -160,7 +171,8 @@ class ConfGenPipeline:
         minimizer: Minimizer,
         ff_provider: ForceFieldProvider,
         stats: dict,
-    ) -> tuple[list[dict], dict]:
+        sdf_writer: SDFWriterContext,
+    ) -> dict:
         results_list = Parallel(n_jobs=self.config.num_workers, backend="loky")(
             delayed(_process_one_molecule)(
                 mol, mol_id, parent_id, generator, minimizer, ff_provider
@@ -168,15 +180,13 @@ class ConfGenPipeline:
             for mol, mol_id, parent_id in stereo_mols
         )
 
-        all_results: list[dict] = []
         for results in results_list:
             if results:
-                all_results.extend(results)
+                self._flush_results(results, sdf_writer)
                 stats["successful_molecules"] += 1
-                stats["total_conformers"] += len(results)
             else:
                 stats["failed_generation"] += 1
-        return all_results, stats
+        return stats
 
     def _build_constraints(
         self, stereo_mols: list[tuple[Chem.Mol, str, str | None]]

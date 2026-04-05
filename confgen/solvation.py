@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 
+from openmm import app, unit
+
 from confgen._constants import EXPLICIT_SOLVENT_MODELS, IMPLICIT_SOLVENT_MODELS
 
 _logger = logging.getLogger(__name__)
@@ -41,8 +43,8 @@ def is_explicit(solvent: str | None) -> bool:
 
 
 def add_explicit_solvent(
-    modeller: "openmm.app.Modeller",
-    forcefield: "openmm.app.ForceField",
+    modeller: app.Modeller,
+    forcefield: app.ForceField,
     solvent: str,
     padding_nm: float = 0.5,
     ionic_strength_molar: float = 0.0,
@@ -56,8 +58,6 @@ def add_explicit_solvent(
         padding_nm: Water box padding in nanometers.
         ionic_strength_molar: Ionic strength for neutralization (NaCl).
     """
-    from openmm import unit
-
     water_model_map = {
         "explicit-tip3p": "tip3p",
         "explicit-tip3pfb": "tip3pfb",

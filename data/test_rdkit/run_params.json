@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-04-05T07:05:05.506234+00:00",
+  "software_versions": {
+    "confgen": "0.1.0",
+    "rdkit": "2024.09.2",
+    "openmm": "8.5",
+    "openff-toolkit": "0.18.0",
+    "openmmforcefields": "0.15.1",
+    "tblite": "0.5.0"
+  },
+  "parameters": {
+    "input": "data/test_data.smi",
+    "output_dir": "data/test_rdkit",
+    "n_confs": 50,
+    "rmsd_threshold": 2.5,
+    "energy_window": null,
+    "forcefield": "mmff",
+    "max_minimize_iters": 500,
+    "solvent": null,
+    "enumerate_stereo": false,
+    "max_stereo_isomers": 32,
+    "constraint_smarts": null,
+    "constraint_coords": null,
+    "max_heavy_atoms": 100,
+    "allowed_elements": null,
+    "num_workers": 1,
+    "num_threads": 16,
+    "platform": "CPU",
+    "seed": 42,
+    "log_level": "INFO"
+  }
+}

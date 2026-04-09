@@ -23,6 +23,11 @@ _logger = logging.getLogger(__name__)
 class Minimizer:
     """Minimize conformer energies using the appropriate backend."""
 
+    # MD parameters: 0.1 ns with 0.5 fs timestep = 100,000 steps
+    _MD_STEPS: int = 100_000
+    _MD_TIMESTEP_FS: float = 0.5 * unit.femtosecond
+    _OPENMM_TOLERANCE: float = 1.0 * unit.kilojoules_per_mole / unit.nanometer
+
     def __init__(
         self,
         ff_provider: ForceFieldProvider,
@@ -31,6 +36,7 @@ class Minimizer:
         platform: str = "CPU",
         seed: int = 42,
         solvent: str | None = None,
+        run_md: bool = False,
     ):
         self.ff_provider = ff_provider
         self.max_iters = max_iters
@@ -38,6 +44,7 @@ class Minimizer:
         self.platform = platform
         self.seed = seed
         self.solvent = solvent
+        self.run_md = run_md
 
     def minimize(
         self,
@@ -130,8 +137,10 @@ class Minimizer:
         for cid in conf_ids:
             positions = self._rdkit_conf_to_openmm_positions(mol, cid)
             simulation.context.setPositions(positions)
+            if self.run_md:
+                self._run_md_steps(simulation)
             simulation.minimizeEnergy(
-                tolerance=10.0 * unit.kilojoules_per_mole / unit.nanometer,
+                tolerance=self._OPENMM_TOLERANCE,
                 maxIterations=self.max_iters,
             )
             state = simulation.context.getState(energy=True, positions=True)
@@ -149,9 +158,6 @@ class Minimizer:
         """Explicit solvent: rebuild solvation box per conformer."""
         energies = []
         for cid in conf_ids:
-            # Update the RDKit mol to have this conformer's coords as the
-            # "current" geometry so build_openmm_system sees them.
-            tmp_mol = Chem.RWMol(mol)
             conf_src = mol.GetConformer(cid)
             # Create a single-conformer copy for system building
             new_mol = Chem.RWMol(mol)
@@ -167,8 +173,10 @@ class Minimizer:
             )
             simulation = self._make_simulation(modeller.topology, system)
             simulation.context.setPositions(modeller.positions)
+            if self.run_md:
+                self._run_md_steps(simulation)
             simulation.minimizeEnergy(
-                tolerance=10.0 * unit.kilojoules_per_mole / unit.nanometer,
+                tolerance=self._OPENMM_TOLERANCE,
                 maxIterations=self.max_iters,
             )
             state = simulation.context.getState(energy=True, positions=True)
@@ -188,12 +196,18 @@ class Minimizer:
         integrator = mm.LangevinMiddleIntegrator(
             300 * unit.kelvin,
             1.0 / unit.picosecond,
-            0.5 * unit.femtosecond,
+            self._MD_TIMESTEP_FS,
         )
         if self.seed >= 0:
             integrator.setRandomNumberSeed(self.seed)
         platform = mm.Platform.getPlatformByName(self.platform)
         return app.Simulation(topology, system, integrator, platform)
+
+    def _run_md_steps(self, simulation: app.Simulation) -> None:
+        """Run a short MD trajectory (0.1 ns, 0.5 fs timestep)."""
+        simulation.context.setVelocitiesToTemperature(300 * unit.kelvin, self.seed)
+        simulation.step(self._MD_STEPS)
+        _logger.debug(f"Completed {self._MD_STEPS} MD steps (0.1 ns)")
 
     @staticmethod
     def _update_rdkit_conf(

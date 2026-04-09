@@ -35,6 +35,9 @@ class ConfGenConfig:
     # Solvation (None = vacuum)
     solvent: str | None = None
 
+    # MD relaxation (OpenMM only)
+    run_md: bool = False
+
     # Stereochemistry
     enumerate_stereo: bool = False
     max_stereo_isomers: int = 32
@@ -78,6 +81,12 @@ class ConfGenConfig:
         if self.solvent is not None and self.forcefield not in OPENMM_FORCEFIELDS:
             raise ValueError(
                 f"Solvation requires an OpenMM forcefield "
+                f"({', '.join(sorted(OPENMM_FORCEFIELDS))}), "
+                f"got '{self.forcefield}'"
+            )
+        if self.run_md and self.forcefield not in OPENMM_FORCEFIELDS:
+            raise ValueError(
+                f"run_md requires an OpenMM forcefield "
                 f"({', '.join(sorted(OPENMM_FORCEFIELDS))}), "
                 f"got '{self.forcefield}'"
             )

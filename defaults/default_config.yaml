@@ -16,6 +16,9 @@ max_minimize_iters: 500
 # --- Solvation ---
 solvent: null                   # null (vacuum) | implicit-obc2 | implicit-gbn2 | explicit-tip3p | ...
 
+# --- MD relaxation (OpenMM only) ---
+run_md: false                   # Run 0.1 ns MD (0.5 fs steps) before minimization
+
 # --- Stereochemistry ---
 enumerate_stereo: false
 max_stereo_isomers: 32

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from pathlib import Path
 
 from rdkit import Chem
 from openmm import app, unit
@@ -72,10 +73,10 @@ class ForceFieldProvider:
             from openmmforcefields.generators.template_generators import (
                 EspalomaTemplateGenerator,
             )
+            # TODO: Try to utilize caching templates
             return EspalomaTemplateGenerator(
                 off_mol, 
                 forcefield=DEFAULT_ESPALOMA_MODEL,
-                cache="~/.cache_espaloma",
                 template_generator_kwargs={"charge_method": "nn"}
             )
 

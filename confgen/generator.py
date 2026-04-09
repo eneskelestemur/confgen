@@ -20,7 +20,7 @@ class ConformerGenerator:
         rmsd_threshold: float = 1.5,
         seed: int = 42,
         num_threads: int = 1,
-        timeout: int = 60,
+        timeout: int = 10,
         coord_map: dict[int, tuple[float, float, float]] | None = None,
     ):
         """

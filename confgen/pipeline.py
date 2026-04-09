@@ -93,6 +93,7 @@ class ConfGenPipeline:
             platform=cfg.platform,
             seed=cfg.seed,
             solvent=cfg.solvent,
+            run_md=cfg.run_md,
         )
 
         # ---- Generate, minimize & write ----

@@ -89,6 +89,10 @@ def main() -> None:
     default=None,
     help=_SOLVENT_HELP,
 )
+@click.option(
+    "--run-md/--no-run-md", default=None,
+    help="Run 0.1 ns MD before minimization (OpenMM only).  [default: off]",
+)
 # ---- Stereochemistry ----
 @click.option(
     "--enumerate-stereo/--no-enumerate-stereo", default=None,

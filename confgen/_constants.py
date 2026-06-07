@@ -5,6 +5,8 @@ ORGANIC_ATOMS: frozenset[str] = frozenset(
     {"H", "C", "N", "O", "S", "P", "F", "Cl", "Br", "I"}
 )
 
+GEN_BACKENDS: frozenset[str] = frozenset({"rdkit", "nvmolkit"})
+
 RDKIT_FORCEFIELDS: frozenset[str] = frozenset({"mmff", "uff"})
 
 OPENMM_FORCEFIELDS: frozenset[str] = frozenset({"gaff", "smirnoff", "espaloma"})

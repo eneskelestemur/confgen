@@ -5,6 +5,7 @@
 output_dir: confgen_output
 
 # --- Conformer Generation ---
+gen_backend: rdkit              # rdkit (CPU) | nvmolkit (GPU, requires NVIDIA GPU)
 n_confs: 200
 rmsd_threshold: 1.5            # Angstroms
 energy_window: null             # kcal/mol above global min; null = no filter
@@ -17,7 +18,14 @@ max_minimize_iters: 500
 solvent: null                   # null (vacuum) | implicit-obc2 | implicit-gbn2 | explicit-tip3p | ...
 
 # --- MD relaxation (OpenMM only) ---
-run_md: false                   # Run 0.1 ns MD (0.5 fs steps) before minimization
+run_md: false                   # Enable multi-phase MD relaxation (see protocol below)
+# Advanced MD parameters (only applied when run_md: true):
+#   Protocol: minimize → NVT equil → [NPT equil, explicit only] → production MD → minimize
+md_timestep_fs: 0.5            # femtoseconds
+md_temperature_k: 300.0        # Kelvin
+md_pressure_atm: 1.0           # atm (NPT phase, explicit solvent only)
+md_nvt_time_ps: 50.0           # duration of NVT and NPT equilibration phases
+md_prod_time_ns: 0.1           # production MD duration
 
 # --- Stereochemistry ---
 enumerate_stereo: false
@@ -32,7 +40,8 @@ max_heavy_atoms: 100
 allowed_elements: null          # null = default organic (C,N,O,S,P,F,Cl,Br,I,H)
 
 # --- Computation ---
-num_workers: 1                  # Molecule-level parallelism (joblib)
+gpu_streams: 1                  # Concurrent conformer simulations via MPS (OpenMM + run_md only)
+save_trajectories: false        # Write DCD trajectory + topology PDB per conformer (run_md only)
 num_threads: 1                  # Per-worker threads (RDKit / OpenMM)
 platform: CPU                   # CPU | CUDA | OpenCL | HIP (OpenMM only)
 seed: 42                        # -1 for non-deterministic

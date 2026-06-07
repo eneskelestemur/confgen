@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from pathlib import Path
 
 from rdkit import Chem
 from openmm import app, unit
@@ -42,8 +41,6 @@ class ForceFieldProvider:
             return "tblite"
         raise ValueError(f"Unknown forcefield: {self.name}")
 
-    # ---- RDKit helpers ----
-
     def has_rdkit_params(self, mol: Chem.Mol) -> bool:
         """Check if the molecule has the required RDKit FF parameters."""
         from rdkit.Chem import rdForceFieldHelpers
@@ -53,8 +50,6 @@ class ForceFieldProvider:
         if self.name == "uff":
             return rdForceFieldHelpers.UFFHasAllMoleculeParams(mol)
         return False
-
-    # ---- OpenMM helpers ----
 
     def _make_template_generator(self, off_mol: Any) -> Any:
         if self.name == "gaff":
@@ -117,20 +112,19 @@ class ForceFieldProvider:
             )
             system = ff.createSystem(
                 modeller.topology,
-                nonbondedMethod=app.NoCutoff,
-                nonbondedCutoff=1 * unit.nanometer,
+                nonbondedMethod=app.PME,
+                nonbondedCutoff=padding_nm * unit.nanometer,
                 rigidWater=True,
             )
         else:
             system = ff.createSystem(
                 modeller.topology,
-                nonbondedMethod=app.NoCutoff,
+                nonbondedMethod=app.PME,
+                nonbondedCutoff=padding_nm * unit.nanometer,
                 rigidWater=False,
             )
 
         return system, modeller
-
-    # ---- tblite helpers ----
 
     def get_tblite_method(self) -> str:
         """Return the tblite method string for the Calculator."""

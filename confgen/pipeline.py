@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from joblib import Parallel, delayed
 from rdkit import Chem
 from tqdm import tqdm
 
@@ -85,6 +84,7 @@ class ConfGenPipeline:
             seed=cfg.seed,
             num_threads=cfg.num_threads,
             coord_map=coord_map,
+            backend=cfg.gen_backend,
         )
         minimizer = Minimizer(
             ff_provider=ff_provider,
@@ -94,6 +94,15 @@ class ConfGenPipeline:
             seed=cfg.seed,
             solvent=cfg.solvent,
             run_md=cfg.run_md,
+            md_timestep_fs=cfg.md_timestep_fs,
+            md_temperature_k=cfg.md_temperature_k,
+            md_pressure_atm=cfg.md_pressure_atm,
+            md_nvt_time_ps=cfg.md_nvt_time_ps,
+            md_prod_time_ns=cfg.md_prod_time_ns,
+            gpu_streams=cfg.gpu_streams,
+            save_trajectories=cfg.save_trajectories,
+            output_dir=str(out_dir),
+            gen_backend=cfg.gen_backend,
         )
 
         # ---- Generate, minimize & write ----
@@ -109,16 +118,18 @@ class ConfGenPipeline:
         }
 
         with SDFWriterContext(sdf_path) as sdf_writer:
-            if cfg.num_workers > 1:
-                stats = self._run_parallel(
-                    stereo_mols, generator, minimizer, ff_provider,
-                    stats, sdf_writer,
+            for mol, mol_id, parent_id in tqdm(
+                stereo_mols, desc="Generating conformers",
+                disable=_logger.level > logging.INFO,
+            ):
+                results = _process_one_molecule(
+                    mol, mol_id, parent_id, generator, minimizer, ff_provider
                 )
-            else:
-                stats = self._run_sequential(
-                    stereo_mols, generator, minimizer, ff_provider,
-                    stats, sdf_writer,
-                )
+                if results:
+                    self._flush_results(results, sdf_writer)
+                    stats["successful_molecules"] += 1
+                else:
+                    stats["failed_generation"] += 1
             stats["total_conformers"] = sdf_writer.count
 
         _logger.info(
@@ -142,52 +153,6 @@ class ConfGenPipeline:
                 results, self.config.energy_window
             )
         sdf_writer.write_results(results)
-
-    def _run_sequential(
-        self,
-        stereo_mols: list[tuple[Chem.Mol, str, str | None]],
-        generator: ConformerGenerator,
-        minimizer: Minimizer,
-        ff_provider: ForceFieldProvider,
-        stats: dict,
-        sdf_writer: SDFWriterContext,
-    ) -> dict:
-        for mol, mol_id, parent_id in tqdm(
-            stereo_mols, desc="Generating conformers", disable=_logger.level > logging.INFO
-        ):
-            results = _process_one_molecule(
-                mol, mol_id, parent_id, generator, minimizer, ff_provider
-            )
-            if results:
-                self._flush_results(results, sdf_writer)
-                stats["successful_molecules"] += 1
-            else:
-                stats["failed_generation"] += 1
-        return stats
-
-    def _run_parallel(
-        self,
-        stereo_mols: list[tuple[Chem.Mol, str, str | None]],
-        generator: ConformerGenerator,
-        minimizer: Minimizer,
-        ff_provider: ForceFieldProvider,
-        stats: dict,
-        sdf_writer: SDFWriterContext,
-    ) -> dict:
-        results_list = Parallel(n_jobs=self.config.num_workers, backend="loky")(
-            delayed(_process_one_molecule)(
-                mol, mol_id, parent_id, generator, minimizer, ff_provider
-            )
-            for mol, mol_id, parent_id in stereo_mols
-        )
-
-        for results in results_list:
-            if results:
-                self._flush_results(results, sdf_writer)
-                stats["successful_molecules"] += 1
-            else:
-                stats["failed_generation"] += 1
-        return stats
 
     def _build_constraints(
         self, stereo_mols: list[tuple[Chem.Mol, str, str | None]]
@@ -257,17 +222,14 @@ def _process_one_molecule(
     minimizer: Minimizer,
     ff_provider: ForceFieldProvider,
 ) -> list[dict] | None:
-    """Process a single molecule: generate conformers, minimize, return result dicts.
-
-    This is a module-level function so joblib can pickle it.
-    """
+    """Process a single molecule: generate conformers, minimize, return result dicts."""
     smiles = Chem.MolToSmiles(mol, isomericSmiles=True)
 
     mol_h, conf_ids = generator.generate(mol)
     if mol_h is None or not conf_ids:
         return None
 
-    energies = minimizer.minimize(mol_h, conf_ids)
+    energies = minimizer.minimize(mol_h, conf_ids, mol_id=mol_id)
 
     results: list[dict] = []
     for i, (cid, energy) in enumerate(energies):

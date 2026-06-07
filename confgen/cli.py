@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 import yaml
 
-from confgen._constants import ALL_FORCEFIELDS, ALL_SOLVENT_MODELS
+from confgen._constants import ALL_FORCEFIELDS, ALL_SOLVENT_MODELS, GEN_BACKENDS
 from confgen.config import ConfGenConfig
 
 # ---- help text blocks ----
@@ -61,6 +61,12 @@ def main() -> None:
 )
 # ---- Conformer generation ----
 @click.option(
+    "--gen-backend",
+    type=click.Choice(sorted(GEN_BACKENDS), case_sensitive=False),
+    default=None,
+    help="Conformer generation backend.  [default: rdkit]",
+)
+@click.option(
     "--n-confs", type=int, default=None,
     help="Number of ETKDG conformer attempts.  [default: 200]",
 )
@@ -91,7 +97,12 @@ def main() -> None:
 )
 @click.option(
     "--run-md/--no-run-md", default=None,
-    help="Run 0.1 ns MD before minimization (OpenMM only).  [default: off]",
+    help=(
+        "Run MD relaxation before final minimization (OpenMM only). "
+        "Protocol: minimize → NVT equil → [NPT equil, explicit only] → "
+        "production MD → minimize.  Advanced parameters (timestep, duration, "
+        "temperature) are configurable in the YAML config.  [default: off]"
+    ),
 )
 # ---- Stereochemistry ----
 @click.option(
@@ -119,8 +130,15 @@ def main() -> None:
 )
 # ---- Computation ----
 @click.option(
-    "--num-workers", type=int, default=None,
-    help="Molecule-level parallelism via joblib.  [default: 1]",
+    "--gpu-streams", type=int, default=None,
+    help=(
+        "Number of conformer simulations to run concurrently on the GPU via MPS "
+        "(OpenMM + run_md only).  [default: 1]"
+    ),
+)
+@click.option(
+    "--save-trajectories/--no-save-trajectories", default=None,
+    help="Save DCD trajectory + topology PDB per conformer to mdsims/ (run_md only).  [default: off]",
 )
 @click.option(
     "--num-threads", type=int, default=None,

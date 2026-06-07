@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from confgen._constants import ALL_FORCEFIELDS, ALL_SOLVENT_MODELS, OPENMM_FORCEFIELDS
+from confgen._constants import ALL_FORCEFIELDS, ALL_SOLVENT_MODELS, GEN_BACKENDS, OPENMM_FORCEFIELDS
 
 _logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class ConfGenConfig:
     output_dir: str = "confgen_output"
 
     # Generation
+    gen_backend: str = "rdkit"        # rdkit | nvmolkit
     n_confs: int = 200
     rmsd_threshold: float = 1.5
     energy_window: float | None = None  # kcal/mol above minimum
@@ -37,6 +38,11 @@ class ConfGenConfig:
 
     # MD relaxation (OpenMM only)
     run_md: bool = False
+    md_timestep_fs: float = 0.5       # femtoseconds
+    md_temperature_k: float = 300.0   # Kelvin
+    md_pressure_atm: float = 1.0      # atm (NPT, explicit solvent only)
+    md_nvt_time_ps: float = 50.0      # NVT equilibration + NPT equilibration duration
+    md_prod_time_ns: float = 0.1      # production MD duration
 
     # Stereochemistry
     enumerate_stereo: bool = False
@@ -51,7 +57,8 @@ class ConfGenConfig:
     allowed_elements: list[str] | None = None
 
     # Computation
-    num_workers: int = 1
+    gpu_streams: int = 1          # concurrent conformer simulations via MPS (OpenMM only)
+    save_trajectories: bool = False  # write DCD + PDB per conformer to mdsims/ (run_md only)
     num_threads: int = 1
     platform: str = "CPU"
     seed: int = 42
@@ -60,6 +67,7 @@ class ConfGenConfig:
     log_level: str = "INFO"
 
     def __post_init__(self) -> None:
+        self.gen_backend = self.gen_backend.lower()
         self.forcefield = self.forcefield.lower()
         self.platform = self.platform.upper()
         self.log_level = self.log_level.upper()
@@ -68,6 +76,11 @@ class ConfGenConfig:
 
     def validate(self) -> None:
         """Raise ValueError for invalid settings."""
+        if self.gen_backend not in GEN_BACKENDS:
+            raise ValueError(
+                f"Unknown gen_backend '{self.gen_backend}'. "
+                f"Choose from: {sorted(GEN_BACKENDS)}"
+            )
         if self.forcefield not in ALL_FORCEFIELDS:
             raise ValueError(
                 f"Unknown forcefield '{self.forcefield}'. "
@@ -96,8 +109,8 @@ class ConfGenConfig:
             raise ValueError("rmsd_threshold must be > 0")
         if self.max_heavy_atoms < 1:
             raise ValueError("max_heavy_atoms must be >= 1")
-        if self.num_workers < 1:
-            raise ValueError("num_workers must be >= 1")
+        if self.gpu_streams < 1:
+            raise ValueError("gpu_streams must be >= 1")
         if self.num_threads < 1:
             raise ValueError("num_threads must be >= 1")
         if self.platform not in ("CPU", "CUDA", "OPENCL", "HIP"):

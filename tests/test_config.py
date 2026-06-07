@@ -85,3 +85,53 @@ def test_to_dict():
 def test_from_defaults():
     cfg = ConfGenConfig.from_defaults()
     assert cfg.forcefield == "mmff"
+
+
+def test_gpu_streams_default():
+    cfg = ConfGenConfig()
+    assert cfg.gpu_streams == 1
+
+
+def test_save_trajectories_default():
+    cfg = ConfGenConfig()
+    assert cfg.save_trajectories is False
+
+
+def test_gen_backend_default():
+    cfg = ConfGenConfig()
+    assert cfg.gen_backend == "rdkit"
+
+
+def test_gen_backend_nvmolkit_validates():
+    cfg = ConfGenConfig(gen_backend="nvmolkit")
+    cfg.validate()  # should not raise
+
+
+def test_gen_backend_invalid():
+    cfg = ConfGenConfig(gen_backend="unknown_backend")
+    with pytest.raises(ValueError, match="gen_backend"):
+        cfg.validate()
+
+
+def test_md_params_defaults():
+    cfg = ConfGenConfig()
+    assert cfg.md_timestep_fs == 0.5
+    assert cfg.md_temperature_k == 300.0
+    assert cfg.md_pressure_atm == 1.0
+    assert cfg.md_nvt_time_ps == 50.0
+    assert cfg.md_prod_time_ns == 0.1
+
+
+def test_md_params_from_yaml(tmp_path):
+    yaml_path = tmp_path / "test.yaml"
+    yaml_path.write_text(yaml.dump({
+        "md_timestep_fs": 2.0,
+        "md_nvt_time_ps": 25.0,
+        "md_prod_time_ns": 0.05,
+        "md_temperature_k": 310.0,
+    }))
+    cfg = ConfGenConfig.from_yaml(yaml_path)
+    assert cfg.md_timestep_fs == 2.0
+    assert cfg.md_nvt_time_ps == 25.0
+    assert cfg.md_prod_time_ns == 0.05
+    assert cfg.md_temperature_k == 310.0

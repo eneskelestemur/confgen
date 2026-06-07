@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 
 from rdkit import Chem
-from rdkit.Geometry import Point3D
 
 _logger = logging.getLogger(__name__)
 

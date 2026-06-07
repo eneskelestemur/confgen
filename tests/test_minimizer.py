@@ -1,4 +1,5 @@
-"""Tests for minimizer module (RDKit backend only — others require optional deps)."""
+"""Tests for minimizer module (RDKit backend always; OpenMM requires optional deps)."""
+import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -41,3 +42,101 @@ def test_minimize_returns_sorted_by_conf_id():
     energies = minimizer.minimize(mol, conf_ids)
     returned_ids = [cid for cid, _ in energies]
     assert returned_ids == conf_ids
+
+
+def test_ps_to_steps():
+    """_ps_to_steps should correctly convert picoseconds to step count."""
+    ff = ForceFieldProvider("mmff")
+    minimizer = Minimizer(ff, md_timestep_fs=0.5)
+    assert minimizer._ps_to_steps(50.0) == 100_000   # 50 ps / 0.5 fs
+    assert minimizer._ps_to_steps(1.0) == 2_000       # 1 ps / 0.5 fs
+
+    minimizer2 = Minimizer(ff, md_timestep_fs=2.0)
+    assert minimizer2._ps_to_steps(50.0) == 25_000    # 50 ps / 2 fs
+
+
+@pytest.mark.slow
+def test_nvmolkit_minimize_mmff():
+    """nvmolkit MMFF minimization should return valid energies and update conformer positions."""
+    pytest.importorskip("nvmolkit")
+    mol, conf_ids = _gen_conformers("CCO", n=3)
+    assert mol is not None
+    ff = ForceFieldProvider("mmff")
+    minimizer = Minimizer(ff, max_iters=200, gen_backend="nvmolkit")
+    energies = minimizer.minimize(mol, conf_ids)
+    assert len(energies) == len(conf_ids)
+    for cid, energy in energies:
+        assert isinstance(energy, float)
+        assert energy == energy  # not NaN
+
+
+@pytest.mark.slow
+def test_nvmolkit_minimize_uff():
+    """nvmolkit UFF minimization should return valid energies."""
+    pytest.importorskip("nvmolkit")
+    mol, conf_ids = _gen_conformers("c1ccccc1", n=3)
+    assert mol is not None
+    ff = ForceFieldProvider("uff")
+    minimizer = Minimizer(ff, max_iters=200, gen_backend="nvmolkit")
+    energies = minimizer.minimize(mol, conf_ids)
+    assert len(energies) == len(conf_ids)
+    for cid, energy in energies:
+        assert isinstance(energy, float)
+        assert energy == energy  # not NaN
+
+
+@pytest.mark.slow
+def test_openmm_vacuum_no_md():
+    """OpenMM vacuum minimization without MD should return valid energies."""
+    openmm = pytest.importorskip("openmm")
+    mol, conf_ids = _gen_conformers("CCO", n=2)
+    assert mol is not None
+    ff = ForceFieldProvider("smirnoff")
+    minimizer = Minimizer(ff, max_iters=50, run_md=False)
+    energies = minimizer.minimize(mol, conf_ids[:1])
+    assert len(energies) == 1
+    assert isinstance(energies[0][1], float)
+
+
+@pytest.mark.slow
+def test_openmm_vacuum_with_md():
+    """run_md with vacuum: initial minimize → NVT → production → final minimize."""
+    pytest.importorskip("openmm")
+    mol, conf_ids = _gen_conformers("CCO", n=2)
+    assert mol is not None
+    ff = ForceFieldProvider("smirnoff")
+    minimizer = Minimizer(
+        ff,
+        max_iters=50,
+        run_md=True,
+        md_nvt_time_ps=0.005,   # 10 steps at 0.5 fs — fast for testing
+        md_prod_time_ns=0.00005,
+    )
+    energies = minimizer.minimize(mol, conf_ids[:1])
+    assert len(energies) == 1
+    assert isinstance(energies[0][1], float)
+
+
+@pytest.mark.slow
+def test_openmm_save_trajectories(tmp_path):
+    """save_trajectories writes topology PDB and DCD trajectory per conformer."""
+    pytest.importorskip("openmm")
+    mol, conf_ids = _gen_conformers("CCO", n=2)
+    assert mol is not None
+    ff = ForceFieldProvider("smirnoff")
+    minimizer = Minimizer(
+        ff,
+        max_iters=50,
+        run_md=True,
+        md_nvt_time_ps=0.005,
+        md_prod_time_ns=0.00005,
+        save_trajectories=True,
+        output_dir=str(tmp_path),
+    )
+    energies = minimizer.minimize(mol, conf_ids[:1], mol_id="ethanol")
+    assert len(energies) == 1
+
+    traj_dir = tmp_path / "mdsims" / "ethanol"
+    cid = conf_ids[0]
+    assert (traj_dir / f"conf_{cid:03d}_topology.pdb").exists()
+    assert (traj_dir / f"conf_{cid:03d}_trajectory.dcd").exists()

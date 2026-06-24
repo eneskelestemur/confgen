@@ -39,3 +39,19 @@ def test_tblite_method():
     assert ForceFieldProvider("gfn2-xtb").get_tblite_method() == "GFN2-xTB"
     assert ForceFieldProvider("gfn1-xtb").get_tblite_method() == "GFN1-xTB"
     assert ForceFieldProvider("ipea1-xtb").get_tblite_method() == "IPEA1-xTB"
+
+
+@pytest.mark.slow
+def test_openmm_vacuum_system_is_nonperiodic():
+    """Vacuum OpenMM systems must not request periodic boundary conditions."""
+    pytest.importorskip("openmm")
+    mol = Chem.AddHs(Chem.MolFromSmiles("CCO"))
+    from rdkit.Chem import AllChem
+
+    AllChem.EmbedMolecule(mol, randomSeed=42)
+    system, modeller = ForceFieldProvider("smirnoff").build_openmm_system(
+        mol, solvent=None
+    )
+
+    assert system.usesPeriodicBoundaryConditions() is False
+    assert modeller.topology.getPeriodicBoxVectors() is None

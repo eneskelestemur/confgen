@@ -46,7 +46,7 @@ def add_explicit_solvent(
     modeller: app.Modeller,
     forcefield: app.ForceField,
     solvent: str,
-    padding_nm: float = 0.5,
+    padding_nm: float = 1.0,
     ionic_strength_molar: float = 0.0,
 ) -> None:
     """Add explicit water and optional ions to an OpenMM Modeller in-place.

@@ -119,8 +119,7 @@ class ForceFieldProvider:
         else:
             system = ff.createSystem(
                 modeller.topology,
-                nonbondedMethod=app.PME,
-                nonbondedCutoff=padding_nm * unit.nanometer,
+                nonbondedMethod=app.NoCutoff,
                 rigidWater=False,
             )
 

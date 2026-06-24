@@ -1,8 +1,11 @@
 """Tests for minimizer module (RDKit backend always; OpenMM requires optional deps)."""
+from concurrent.futures import Future
+
 import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
+import confgen.minimizer as minimizer_mod
 from confgen.forcefield import ForceFieldProvider
 from confgen.minimizer import Minimizer
 from confgen.generator import ConformerGenerator
@@ -53,6 +56,44 @@ def test_ps_to_steps():
 
     minimizer2 = Minimizer(ff, md_timestep_fs=2.0)
     assert minimizer2._ps_to_steps(50.0) == 25_000    # 50 ps / 2 fs
+
+
+def test_run_parallel_preserves_job_order(monkeypatch):
+    """Parallel OpenMM workers should return results in conformer/job order."""
+    submitted = []
+
+    class FakeExecutor:
+        def __init__(self, max_workers, mp_context):
+            self.max_workers = max_workers
+            self.mp_context = mp_context
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, **kwargs):
+            submitted.append(kwargs)
+            future = Future()
+            cid = kwargs["original_cid"]
+            if cid == 2:
+                future.set_exception(RuntimeError("boom"))
+            else:
+                future.set_result((cid, float(cid), None))
+            return future
+
+    monkeypatch.setattr(minimizer_mod, "ProcessPoolExecutor", FakeExecutor)
+
+    ff = ForceFieldProvider("smirnoff")
+    minimizer = Minimizer(ff, gpu_streams=2)
+    jobs = [{"original_cid": 3}, {"original_cid": 1}, {"original_cid": 2}]
+
+    results = minimizer._run_parallel(jobs)
+
+    assert submitted == jobs
+    assert [cid for cid, _, _ in results] == [3, 1, 2]
+    assert results[-1][1] != results[-1][1]
 
 
 @pytest.mark.slow

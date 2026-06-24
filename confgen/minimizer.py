@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -325,17 +325,18 @@ class Minimizer:
         worker processes share the GPU's SMs concurrently.
         """
         ctx = multiprocessing.get_context("spawn")
-        results = []
+        results_by_cid = {}
         with ProcessPoolExecutor(max_workers=self.gpu_streams, mp_context=ctx) as executor:
-            futures = [executor.submit(_openmm_worker, **j) for j in jobs]
-            for fut, j in zip(futures, jobs):
+            future_to_job = {executor.submit(_openmm_worker, **j): j for j in jobs}
+            for fut in as_completed(future_to_job):
+                j = future_to_job[fut]
+                cid = j["original_cid"]
                 try:
-                    results.append(fut.result())
+                    results_by_cid[cid] = fut.result()
                 except Exception as exc:
-                    cid = j["original_cid"]
                     _logger.error(f"Conformer {cid} parallel execution failed: {exc}")
-                    results.append((cid, float("nan"), None))
-        return results
+                    results_by_cid[cid] = (cid, float("nan"), None)
+        return [results_by_cid[j["original_cid"]] for j in jobs]
 
     def _ps_to_steps(self, time_ps: float) -> int:
         """Convert a duration in picoseconds to an integer step count."""
